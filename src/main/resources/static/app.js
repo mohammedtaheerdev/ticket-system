@@ -67,6 +67,11 @@
       try {
         await api("/api/auth/login", { method: "POST", body: JSON.stringify({ email, password }) });
         sessionStorage.setItem(authKey, btoa(`${email}:${password}`));
+        setTicket(null);
+        setEditingTicket(false);
+        setCreating(false);
+        setShowTeam(false);
+        setPage(0);
         setIdentity(await api("/api/auth/me"));
         setError("");
       } catch (reason) { setError(reason.message); }
@@ -79,6 +84,11 @@
       try {
         const result = await api("/api/auth/register", { method: "POST", body: JSON.stringify(fields) });
         sessionStorage.setItem(authKey, btoa(`${fields.email}:${fields.password}`));
+        setTicket(null);
+        setEditingTicket(false);
+        setCreating(false);
+        setShowTeam(false);
+        setPage(0);
         setIdentity(result);
         setError("");
       } catch (reason) { setError(reason.message); }
@@ -95,6 +105,8 @@
       setPage(0);
       setShowTeam(false);
       setEditingTicket(false);
+      setCreating(false);
+      setError("");
     }
 
     function loadTicket(id) {
