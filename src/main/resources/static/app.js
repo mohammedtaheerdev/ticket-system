@@ -1,16 +1,35 @@
 (() => {
   const { createElement: h, useEffect, useState } = React;
   const roles = { ORGANIZATION_ADMIN: "Organization Admin", SUPPORT_AGENT: "Support Agent", CUSTOMER: "Customer" };
-  const authKey = "support-desk-auth";
+  let csrfToken;
+
+  async function getCsrfToken() {
+    if (!csrfToken) {
+      const response = await fetch("/api/auth/csrf", { credentials: "same-origin" });
+      if (!response.ok) throw new Error(`Could not initialize request security (${response.status})`);
+      const payload = await response.json();
+      csrfToken = payload.token;
+    }
+    return csrfToken;
+  }
 
   async function api(path, options = {}) {
     const headers = { "Content-Type": "application/json", ...(options.headers || {}) };
-    const credentials = sessionStorage.getItem(authKey);
-    if (credentials) headers.Authorization = `Basic ${credentials}`;
-    const response = await fetch(path, { ...options, headers });
+    const method = (options.method || "GET").toUpperCase();
+    if (!["GET", "HEAD", "OPTIONS", "TRACE"].includes(method)) {
+      headers["X-XSRF-TOKEN"] = await getCsrfToken();
+    }
+    const response = await fetch(path, { ...options, method, headers, credentials: "same-origin" });
     if (!response.ok) {
       const payload = await response.json().catch(() => ({}));
-      throw new Error(payload.message || `Request failed (${response.status})`);
+      if (response.status === 401
+          && !["/api/auth/login", "/api/auth/register", "/api/auth/csrf",
+            "/api/auth/me", "/api/auth/logout"].includes(path)) {
+        window.dispatchEvent(new Event("support-auth-expired"));
+      }
+      const error = new Error(payload.message || `Request failed (${response.status})`);
+      error.status = response.status;
+      throw error;
     }
     return response.status === 204 ? null : response.json();
   }
@@ -32,8 +51,26 @@
     const [refresh, setRefresh] = useState(0);
 
     useEffect(() => {
-      if (!sessionStorage.getItem(authKey)) return;
-      api("/api/auth/me").then(setIdentity).catch(() => sessionStorage.removeItem(authKey));
+      api("/api/auth/me").then(setIdentity).catch(reason => {
+        if (reason.status !== 401) setError(reason.message);
+      });
+    }, []);
+
+    useEffect(() => {
+      function handleSessionExpiry() {
+        csrfToken = null;
+        setIdentity(null);
+        setTicket(null);
+        setTickets([]);
+        setSupportUsers([]);
+        setTeamUsers([]);
+        setCreating(false);
+        setShowTeam(false);
+        setEditingTicket(false);
+        setError("Your session expired. Please sign in again.");
+      }
+      window.addEventListener("support-auth-expired", handleSessionExpiry);
+      return () => window.removeEventListener("support-auth-expired", handleSessionExpiry);
     }, []);
 
     useEffect(() => {
@@ -65,14 +102,16 @@
       const email = data.get("email");
       const password = data.get("password");
       try {
-        await api("/api/auth/login", { method: "POST", body: JSON.stringify({ email, password }) });
-        sessionStorage.setItem(authKey, btoa(`${email}:${password}`));
+        const authenticatedIdentity = await api("/api/auth/login", {
+          method: "POST", body: JSON.stringify({ email, password })
+        });
+        csrfToken = null;
         setTicket(null);
         setEditingTicket(false);
         setCreating(false);
         setShowTeam(false);
         setPage(0);
-        setIdentity(await api("/api/auth/me"));
+        setIdentity(authenticatedIdentity);
         setError("");
       } catch (reason) { setError(reason.message); }
     }
@@ -82,20 +121,27 @@
       const data = new FormData(event.currentTarget);
       const fields = Object.fromEntries(data.entries());
       try {
-        const result = await api("/api/auth/register", { method: "POST", body: JSON.stringify(fields) });
-        sessionStorage.setItem(authKey, btoa(`${fields.email}:${fields.password}`));
+        const authenticatedIdentity = await api("/api/auth/register", {
+          method: "POST", body: JSON.stringify(fields)
+        });
+        csrfToken = null;
         setTicket(null);
         setEditingTicket(false);
         setCreating(false);
         setShowTeam(false);
         setPage(0);
-        setIdentity(result);
+        setIdentity(authenticatedIdentity);
         setError("");
       } catch (reason) { setError(reason.message); }
     }
 
-    function logout() {
-      sessionStorage.removeItem(authKey);
+    async function logout() {
+      try {
+        await api("/api/auth/logout", { method: "POST" });
+      } catch (reason) {
+        if (reason.status !== 401) setError(reason.message);
+      }
+      csrfToken = null;
       setIdentity(null);
       setTicket(null);
       setTickets([]);

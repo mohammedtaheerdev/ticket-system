@@ -64,6 +64,9 @@ public final class ApiDtos {
     public record LoginView(UserView user, OrganizationView organization) {
     }
 
+    public record CsrfTokenView(String token, String headerName) {
+    }
+
     public record CommentView(Long id, UserView author, String body, boolean internal, Instant createdAt) {
     }
 
